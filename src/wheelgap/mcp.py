@@ -614,10 +614,10 @@ def _platforms(args: dict[str, Any]) -> list[str]:
 
 def _pythons(args: dict[str, Any]) -> list[str]:
     python = _string(args, "python")
-    if python is not None and not python.strip():
-        # An empty argument is the argument's fault, not a missing -p: omit it to take the server's Python.
-        raise ToolError("'python' is empty: omit it to use the server's Python, or pass a version like \"3.13\"")
     parts = [p.strip().lower() for p in (python or "").split(",") if p.strip()]  # the CLI takes Next and 3.14T too
+    if python is not None and not parts:
+        # An empty argument ("" or ",") is the argument's fault, not a missing -p: omit it to take the default.
+        raise ToolError("'python' is empty: omit it to use the default Python, or pass a version like \"3.13\"")
     if bad := [p for p in parts if not _PYTHON_RE.fullmatch(p)]:
         raise ToolError(
             f"can't read Python version(s) {', '.join(map(repr, bad))} (expected e.g. '3.13', '3.14t' or 'next')"

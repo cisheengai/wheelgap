@@ -726,12 +726,13 @@ def test_check_lockfile_empty_python_in_config_names_the_setting(fixtures, tmp_p
     assert not re.search(r"-p\b|-t\b", message)
 
 
-def test_check_lockfile_empty_python_argument_names_the_argument(fixtures):
-    """An empty python argument is the argument's fault, not a missing -p: omit it for the server's Python."""
-    (_, reply) = run(init(), call("check_lockfile", path=str(fixtures / "uvproj" / "uv.lock"), python=""))
+@pytest.mark.parametrize("python", ["", " ", ","])
+def test_check_lockfile_empty_python_argument_names_the_argument(fixtures, python):
+    """An empty python argument is the argument's fault, not a missing -p: omit it for the default Python."""
+    (_, reply) = run(init(), call("check_lockfile", path=str(fixtures / "uvproj" / "uv.lock"), python=python))
     assert reply["result"]["isError"] is True
     message = reply["result"]["content"][0]["text"]
-    assert message == ("'python' is empty: omit it to use the server's Python, or pass a version like \"3.13\"")
+    assert message == ("'python' is empty: omit it to use the default Python, or pass a version like \"3.13\"")
 
 
 def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tmp_path, monkeypatch):
@@ -1221,10 +1222,11 @@ def test_check_dockerfile_ignores_unused_arg_defaults(fake_pypi, tmp_path, fixtu
     assert not any("FROM uses the default of ARG" in note for note in reply["result"]["structuredContent"]["notes"])
 
 
-def test_check_dockerfile_scratch_image_names_no_flags(fake_pypi, tmp_path, fixtures):
+@pytest.mark.parametrize("inputs", [False, True])
+def test_check_dockerfile_scratch_image_names_no_flags(fake_pypi, tmp_path, fixtures, inputs):
     """FROM scratch has no Python and no COPY wheelgap follows, but -p/-t are not the answer: point at the files."""
     dockerfile = dockerfile_project(tmp_path, fixtures, "FROM scratch\n")
-    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile)))
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile), inputs=inputs))
     assert reply["result"]["isError"] is True
     message = reply["result"]["content"][0]["text"]
     assert "check_lockfile" in message

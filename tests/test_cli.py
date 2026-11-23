@@ -930,7 +930,7 @@ def test_empty_python_flag_is_an_error(capsys, fixtures, flag, as_json):
         assert not out
 
 
-@pytest.mark.parametrize("python", ['""', '["3.13", ""]'])
+@pytest.mark.parametrize("python", ['""', '["3.13", ""]', '","', '["3.13", " , "]'])
 @pytest.mark.parametrize("as_json", [False, True])
 def test_empty_python_in_config_is_an_error(capsys, fixtures, tmp_path, as_json, python):
     project = project_with_lock(tmp_path, fixtures)
