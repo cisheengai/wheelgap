@@ -33,10 +33,10 @@ This page summarizes each difference, what wheelgap assumes, what installers do,
 
 ## Requirements file hashes
 
-- **What wheelgap assumes:** `--hash` options in requirements files (`--hash=sha256:...`) are ignored during file selection.
-- **What pip and uv do:** `pip` and `uv` restrict candidate downloads strictly to files matching one of the specified hashes. If a hash is provided only for the sdist, pip builds from source even when matching wheels exist on PyPI.
-- **When it changes the answer:** A package pinned with only an sdist hash is reported by wheelgap as `wheel` if prebuilt wheels exist, while pip and uv build it from source.
-- **Tracking:** Tracked in [#633](https://github.com/wheelgap/wheelgap/issues/633).
+- **What wheelgap assumes:** A requirement's `--hash=sha256:…` options limit which of its release's files are checked (after 0.13.0), by the `sha256` digests PyPI's JSON API gives, and a range takes the newest release that has a listed file. A file the index gives no `sha256` for (some mirrors behind `WHEELGAP_INDEX_URL`) is kept. Not read yet, so the answer is the one without them: `sha384` and `sha512` hashes, `--hash` on a line of a constraints file, and the lookups of `--index-url`.
+- **What pip and uv do:** They install only a file whose hash is listed: with only the sdist's hash, they build from source even when a matching wheel exists on PyPI. A file whose hash the index doesn't give is downloaded and refused if its hash isn't listed. pip also hash-checks the whole install once any requirement has a `--hash`, and refuses it when another requirement has none.
+- **When it changes the answer:** With only `sha384`/`sha512` hashes, a `--hash` in a constraints file, or `--index-url`, wheelgap can say `wheel` where pip and uv build the sdist or refuse the download. On an index without digests it can say `wheel` where pip downloads a wheel whose hash isn't listed and stops. wheelgap doesn't refuse a file in which one requirement has a `--hash` and another has none, which pip refuses.
+- **Tracking:** [#633](https://github.com/wheelgap/wheelgap/issues/633) made `--hash=sha256` count; the cases above aren't tracked yet.
 
 ## Additional index URLs
 
@@ -82,7 +82,7 @@ This page summarizes each difference, what wheelgap assumes, what installers do,
 
 ## Constraints files
 
-- **What wheelgap assumes:** A requirement is checked without testing it against the `-c constraints.txt` file it is installed with. A pin (`idna==3.6`) is checked at its own version, and a range (`idna>=3.8`) is checked at the constraint's pin (`idna==3.7`) even when the pin is outside the range.
-- **What pip and uv do:** `pip install` and `uv pip install` apply the constraint to the requirement and refuse the install when the two conflict.
-- **When it changes the answer:** wheelgap reports wheel coverage for a version even though pip and uv refuse the install. `--deps` resolves the set and catches the conflict.
-- **Tracking:** Tracked in [#631](https://github.com/wheelgap/wheelgap/issues/631).
+- **What wheelgap assumes:** A requirement is checked against the constraints in its `-c` files (after 0.13.0), with versions matched as pip matches them (`==1.9` and `==1.9.0` agree, `==1.0` with `==1.0+cpu` is `1.0+cpu`), and a conflict is an error that makes the package `unknown`: a pin that a constraint leaves out (`idna==3.6` with `idna==3.7` or `idna>=3.7`), or an exact constraint that the requirement's range or another constraint leaves out (`idna>=3.8` with `idna==3.7`). Not followed yet: a constraint with an environment marker that leaves out a pinned requirement makes the package `unknown` on every target; two ranges with nothing in common (`idna>=3.8` with `idna<3`) are reported as `no release matches` rather than as a conflict; a constraint with extras (`idna[socks]==3.7`) is read as `idna==3.7`; and a URL or path constraint makes the package `unknown`.
+- **What pip and uv do:** `pip install` and `uv pip install` apply the constraints to the requirement and refuse the install when they conflict, and a constraint with a marker counts only where its marker holds. pip refuses any constraint with extras ("Constraints cannot have extras"), which uv accepts. Both install from a URL constraint whose version the requirement allows.
+- **When it changes the answer:** wheelgap says `unknown` where pip installs (a marked constraint whose marker doesn't hold on the target, a URL or path constraint that fits the requirement), and checks a constraint with extras that pip refuses.
+- **Tracking:** Conflicts were [#631](https://github.com/wheelgap/wheelgap/issues/631); the cases above aren't tracked yet.

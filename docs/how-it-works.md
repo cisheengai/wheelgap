@@ -36,6 +36,27 @@ a row; the same version can appear twice if its eligible files differ by Python.
 gets `unknown` with its own error, while other Pythons still show their results. The Python `check_lockfile()` API
 uses the same representation with separate `Result` objects.
 
+## Which patch release is checked {#patch-release}
+
+wheelgap knows a Python by its minor version, so `-p 3.9` means Python 3.9 at its newest patch release. A release's
+`Requires-Python` is compared with that: a late patch release of 3.9, later than any that exists. So a release that
+leaves out early patch releases, with `!=3.9.0` or `>=3.9.2`, counts as installable on that Python, as it is for
+anyone on a current 3.9. (A dependency marker on `python_full_version` whose answer depends on the patch release
+counts as unknown instead, so the dependency is kept.)
+
+That is right for an image that follows a minor version, like `python:3.9-slim`. It can be wrong for one pinned to
+an early patch release: cryptography 44.0.0 has `Requires-Python: !=3.9.0,!=3.9.1,>=3.7`, so pip in
+`python:3.9.1-slim` refuses it, and wheelgap, which checks 3.9, doesn't flag it. `-p` takes no patch release
+(`-p 3.9.1` is an error), so when `--dockerfile` reads a tag that names one, wheelgap checks the minor version and
+(after 0.13.0) says so:
+
+```
+wheelgap: note: Dockerfile: python:3.9.1-slim pins Python 3.9.1; wheelgap checks 3.9 at its newest patch release, so a package that needs a later 3.9 patch isn't flagged
+```
+
+The note goes to stderr, isn't printed with `--quiet`, and isn't printed when `-p` is given, since the image's
+Python isn't the one checked then. It doesn't change any status or the exit code.
+
 ## Environment markers
 
 Environment markers are respected. A `pywin32 ; sys_platform == 'win32'` dependency won't show up as a Linux gap; it
