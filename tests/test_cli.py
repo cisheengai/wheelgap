@@ -930,23 +930,34 @@ def test_empty_python_flag_is_an_error(capsys, fixtures, flag, as_json):
         assert not out
 
 
+@pytest.mark.parametrize("python", ['""', '["3.13", ""]'])
 @pytest.mark.parametrize("as_json", [False, True])
-def test_empty_python_in_config_is_an_error(capsys, fixtures, tmp_path, as_json):
+def test_empty_python_in_config_is_an_error(capsys, fixtures, tmp_path, as_json, python):
     project = project_with_lock(tmp_path, fixtures)
-    (project / "pyproject.toml").write_text('[tool.wheelgap]\npython = [""]\n', encoding="utf-8")
+    (project / "pyproject.toml").write_text(f"[tool.wheelgap]\npython = {python}\n", encoding="utf-8")
     args = [str(project), "-t", "linux-x86_64"]
     if as_json:
         args.append("--json")
     code, out, err = run(capsys, *args)
     assert code == 2
-    assert "wheelgap: error: no Python version given (-p is empty)" in err
+    # The setting is the cause, so the message names it: the run never sees -p.
+    message = '[tool.wheelgap] python is empty: remove it to use the default, or list versions like ["3.13"]'
+    assert f"wheelgap: error: {project / 'pyproject.toml'}: {message}" in err
     if as_json:
         assert json.loads(out)["error"] == {
-            "message": "no Python version given (-p is empty)",
-            "type": "TargetError",
+            "message": f"{project / 'pyproject.toml'}: {message}",
+            "type": "SourceError",
         }
     else:
         assert not out
+
+
+def test_empty_python_list_in_config_takes_the_default(capsys, fixtures, tmp_path):
+    project = project_with_lock(tmp_path, fixtures)
+    (project / "pyproject.toml").write_text("[tool.wheelgap]\npython = []\n", encoding="utf-8")
+    # An empty list is "not set", as before: the run takes the default Python rather than failing.
+    _, out, _ = run(capsys, str(project), "-t", "win-amd64", "--json")
+    assert [t["python"] for t in json.loads(out)["targets"]] == [cli.running_python()]
 
 
 @pytest.mark.parametrize("as_json", [False, True])

@@ -613,8 +613,11 @@ def _platforms(args: dict[str, Any]) -> list[str]:
 
 
 def _pythons(args: dict[str, Any]) -> list[str]:
-    python = _string(args, "python") or ""
-    parts = [p.strip().lower() for p in python.split(",") if p.strip()]  # the CLI takes Next and 3.14T too
+    python = _string(args, "python")
+    if python is not None and not python.strip():
+        # An empty argument is the argument's fault, not a missing -p: omit it to take the server's Python.
+        raise ToolError("'python' is empty: omit it to use the server's Python, or pass a version like \"3.13\"")
+    parts = [p.strip().lower() for p in (python or "").split(",") if p.strip()]  # the CLI takes Next and 3.14T too
     if bad := [p for p in parts if not _PYTHON_RE.fullmatch(p)]:
         raise ToolError(
             f"can't read Python version(s) {', '.join(map(repr, bad))} (expected e.g. '3.13', '3.14t' or 'next')"
@@ -1037,6 +1040,8 @@ _CLI_ADVICE = {
     # check_dist is the tool itself, so there is nothing to drop: the other way out is all that's left.
     "drop --dist, or set": "set",
     "pass -p/-t instead": "use check_lockfile with python and targets instead",
+    # FROM scratch: no flag stands in for an image wheelgap can't read the Python of, so the way out is the files.
+    "-p/-t don't stand in for it": "check the requirements files with check_lockfile, python and targets instead",
     "pass -t and --glibc instead": "use check_lockfile with targets and glibc instead",
     "pass --build-arg if the build sets one": "pass build_args if the build supplies a value",
     # WHEELGAP_INDEX_URL is a JSON API mirror (pypi.check_index_url refuses /simple), not a simple index, so the advice

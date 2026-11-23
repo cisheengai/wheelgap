@@ -715,6 +715,25 @@ def test_check_lockfile_unknown_group_names_no_flag(fixtures):
     assert not re.search(r"(^|\s)--[a-z]", message)
 
 
+def test_check_lockfile_empty_python_in_config_names_the_setting(fixtures, tmp_path):
+    """A python = "" in [tool.wheelgap] is the setting's fault: the run never sees -p, so say so."""
+    (tmp_path / "uv.lock").write_bytes((fixtures / "uvproj" / "uv.lock").read_bytes())
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\npython = ""\n', encoding="utf-8")
+    (_, reply) = run(init(), call("check_lockfile", path=str(tmp_path / "uv.lock")))
+    assert reply["result"]["isError"] is True
+    message = reply["result"]["content"][0]["text"]
+    assert "[tool.wheelgap] python is empty" in message
+    assert not re.search(r"-p\b|-t\b", message)
+
+
+def test_check_lockfile_empty_python_argument_names_the_argument(fixtures):
+    """An empty python argument is the argument's fault, not a missing -p: omit it for the server's Python."""
+    (_, reply) = run(init(), call("check_lockfile", path=str(fixtures / "uvproj" / "uv.lock"), python=""))
+    assert reply["result"]["isError"] is True
+    message = reply["result"]["content"][0]["text"]
+    assert message == ("'python' is empty: omit it to use the server's Python, or pass a version like \"3.13\"")
+
+
 def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tmp_path, monkeypatch):
     """offline: false on a uv.lock is --online: its note about files pip would refuse points at --explain and --json."""
     filename = "purewheel-3.1-py3-none-any.whl"
@@ -1200,6 +1219,16 @@ def test_check_dockerfile_ignores_unused_arg_defaults(fake_pypi, tmp_path, fixtu
     (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile)))
     assert reply["result"]["structuredContent"]["image"]["build_args"] == {}
     assert not any("FROM uses the default of ARG" in note for note in reply["result"]["structuredContent"]["notes"])
+
+
+def test_check_dockerfile_scratch_image_names_no_flags(fake_pypi, tmp_path, fixtures):
+    """FROM scratch has no Python and no COPY wheelgap follows, but -p/-t are not the answer: point at the files."""
+    dockerfile = dockerfile_project(tmp_path, fixtures, "FROM scratch\n")
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile)))
+    assert reply["result"]["isError"] is True
+    message = reply["result"]["content"][0]["text"]
+    assert "check_lockfile" in message
+    assert not re.search(r"-p\b|-t\b", message)
 
 
 def test_check_dockerfile_matches_the_cli(fake_pypi, tmp_path, fixtures, capsys):

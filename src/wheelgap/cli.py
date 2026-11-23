@@ -507,6 +507,13 @@ def load_config(path: Path) -> dict:
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise SourceError(f"{path}: [tool.wheelgap] {key} must be a list of strings")
+            if key == "python" and any(not v.strip() for v in value):
+                # `python = ""` (or a stray "" in the list) is the setting's fault, not -p's: the run never sees
+                # -p. An empty list is "not set" and takes the default Python, as before.
+                raise SourceError(
+                    f"{path}: [tool.wheelgap] python is empty: remove it to use the default, or list versions "
+                    'like ["3.13"]'
+                )
         elif key in STR_KEYS:
             if key == "android-api" and isinstance(value, int) and not isinstance(value, bool):
                 value = str(value)  # an API level is naturally written as a number
