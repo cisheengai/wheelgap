@@ -8,6 +8,7 @@ from wheelgap import dockerignore, pypi
 from wheelgap.cli import main
 from wheelgap.dockerfile import (
     DockerfileError,
+    HeredocSyntaxError,
     ImageTarget,
     InputsReport,
     UnknownImageError,
@@ -4697,3 +4698,67 @@ def test_dockerfile_requirements_reads_exact_case_copy_paths(tmp_path):
 
     inputs = dockerfile_requirements(dockerfile)
     assert [req_path.name for _, req_path in inputs] == ["requirements.txt", "base.txt"]
+
+
+HEREDOC_SYNTAX_14 = (
+    "# syntax=docker/dockerfile:1.4\n"
+    "FROM python:3.13-slim\n"
+    "WORKDIR /app\n"
+    "COPY requirements.txt .\n"
+    "RUN pip install -r requirements.txt\n"
+    "RUN cat > /etc/motd <<EOF\n"
+    "hello ${HOME}\n"
+    "EOF\n"
+    "RUN cat > /etc/x << EOF\n"
+    "hi\n"
+    "EOF\n"
+)
+
+
+def test_heredoc_syntax_refusal_names_the_line_of_its_instruction(tmp_path):
+    path = _dockerfile(tmp_path, HEREDOC_SYNTAX_14)
+    with pytest.raises(HeredocSyntaxError) as info:
+        read_dockerfile(path)
+    assert str(info.value) == (
+        f"{path}:9: # syntax=docker/dockerfile:1.4 may read the heredocs in 'RUN cat > /etc/x << EOF' differently "
+        "from docker/dockerfile 1.16 and later, which wheelgap follows, pass -p/-t instead"
+    )
+    assert (info.value.line, info.value.hard) == (9, False)  # a FROM came first: -p/-t can stand in for the image
+
+
+def test_heredoc_syntax_refusal_before_the_first_from_cannot_be_stood_in_for(tmp_path):
+    # How a heredoc there is read can change which lines are FROM lines, so -p/-t don't stand in for the image.
+    path = _dockerfile(
+        tmp_path, "# syntax=docker/dockerfile:1.4\nRUN cat > /etc/x << EOF\nFROM base\nEOF\nFROM python:3.13\n"
+    )
+    with pytest.raises(HeredocSyntaxError) as info:
+        read_dockerfile(path)
+    assert info.value.hard is True
+    assert str(info.value).startswith(f"{path}:2: # syntax=docker/dockerfile:1.4")
+
+
+def test_dockerfile_inputs_heredoc_syntax_refusal_advises_dropping_the_line(tmp_path):
+    path = _context(tmp_path, HEREDOC_SYNTAX_14)
+    with pytest.raises(DockerfileError) as info:
+        dockerfile_requirements(path)
+    message = str(info.value)
+    assert message.startswith(f"{path}:9: # syntax=docker/dockerfile:1.4 may read the heredocs")
+    assert "drop the `# syntax=` line, or set it to docker/dockerfile:1" in message
+    assert "-p/-t" not in message
+
+
+def test_cli_dockerfile_heredoc_syntax_refusal_falls_back_to_p_and_t(tmp_path, capsys, fake_pypi):
+    path = _context(tmp_path, HEREDOC_SYNTAX_14)
+    assert main(["purewheel", "--dockerfile", str(path), "-p", "3.13", "-t", "linux-x86_64"]) == 0
+    captured = capsys.readouterr()
+    # The usual note, naming the line of the refusal and leaving the -p/-t advice out of it.
+    assert (
+        f"wheelgap: note: {path}:9: the final image isn't read (# syntax=docker/dockerfile:1.4 may read the heredocs"
+        in captured.err
+    )
+    assert "which wheelgap follows)" in captured.err and "pass -p/-t instead" not in captured.err
+    # Without both -p and -t it is still an error, naming the line, and still says to pass them.
+    assert main(["purewheel", "--dockerfile", str(path)]) == 2
+    captured = capsys.readouterr()
+    assert f"wheelgap: error: {path}:9: # syntax=docker/dockerfile:1.4 may read the heredocs" in captured.err
+    assert "pass -p/-t instead" in captured.err

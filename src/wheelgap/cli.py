@@ -507,6 +507,13 @@ def load_config(path: Path) -> dict:
                 value = [value]
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise SourceError(f"{path}: [tool.wheelgap] {key} must be a list of strings")
+            if key == "python" and any(not v.strip() for v in value):
+                # `python = ""` (or a stray "" in the list) is the setting's fault, not -p's: the run never sees
+                # -p. An empty list is "not set" and takes the default Python, as before.
+                raise SourceError(
+                    f"{path}: [tool.wheelgap] python is empty: remove it to use the default, or list versions "
+                    'like ["3.13"]'
+                )
         elif key in STR_KEYS:
             if key == "android-api" and isinstance(value, int) and not isinstance(value, bool):
                 value = str(value)  # an API level is naturally written as a number
@@ -2211,7 +2218,7 @@ def _main(argv: list[str], project: Path | None = None) -> int:
         try:
             image = read_dockerfile(Path(args.dockerfile), build_args)
         except UnknownImageError as e:
-            if not (args.python and args.target):
+            if not (args.python and args.target) or getattr(e, "hard", False):
                 raise
             unknown_image = e
 
@@ -2274,7 +2281,12 @@ def _main(argv: list[str], project: Path | None = None) -> int:
                 # -p and -t are both given, so nothing is taken from the image. What that leaves unknown is said
                 # every time, --quiet or not: the answer is for the targets given, not for an image wheelgap read.
                 libc = "" if args.glibc or args.musl else " (pass --glibc or --musl if it isn't wheelgap's default)"
-                reason = str(unknown_image).removeprefix(f"{args.dockerfile}: ").removesuffix(", pass -p/-t instead")
+                reason = str(unknown_image).removesuffix(", pass -p/-t instead")
+                # read_dockerfile names the file as the Path it read, which on Windows has \ in it: strip either.
+                for where in (args.dockerfile, str(Path(args.dockerfile))):
+                    reason = reason.removeprefix(f"{where}: ")
+                    if unknown_image.line is not None:  # a heredoc refusal names its line in the message
+                        reason = reason.removeprefix(f"{where}:{unknown_image.line}: ")
                 message = (
                     f"the final image isn't read ({reason}), so this run checks the -p and -t given. Not known from "
                     "the Dockerfile: which Python the image's pip installs for and which pip version it has, its "

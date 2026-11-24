@@ -114,6 +114,21 @@ class UnknownImageError(DockerfileError):
     image: str | None = None
 
 
+class HeredocSyntaxError(UnknownImageError):
+    """A `# syntax=` frontend that may read the heredocs in an instruction differently from docker/dockerfile 1.16
+    and later, which wheelgap follows. `line` is the instruction's line. `-p` and `-t` on the command line can stand
+    in for the image a read would give, unless the instruction comes before the first FROM: how a heredoc there is
+    read can change which lines are FROM lines, so the error stays one (`hard`)."""
+
+    line: int | None = None
+    hard: bool = False
+
+    def __init__(self, message: str, line: int | None = None, hard: bool = False) -> None:
+        super().__init__(message)
+        self.line = line
+        self.hard = hard
+
+
 @dataclass(frozen=True)
 class ImageTarget:
     python: str
@@ -704,7 +719,7 @@ def _parse_froms(
             # heredoc body never gets here, so `RUN <<EOF` with an ARG in its body isn't read as one.
             args_before_from.append((instruction, joined))
 
-    def heredocs_in(instruction: str) -> deque[tuple[str, bool]]:
+    def heredocs_in(instruction: str, line_number: int) -> deque[tuple[str, bool]]:
         docs = deque(_heredocs(instruction, escape))
         if rules == 16 or (args := _heredoc_args(instruction, escape)) is None:
             return docs
@@ -718,9 +733,13 @@ def _parse_froms(
                 or (rules < 9 and args.startswith("["))
             )
         if differs:
-            raise DockerfileError(
+            # Before the first FROM, how a heredoc is read can change which lines are FROM lines: then -p/-t can't
+            # stand in for the image, so the error stays one.
+            raise HeredocSyntaxError(
                 f"# syntax={syntax} may read the heredocs in {instruction.strip()[:60]!r} differently from "
-                "docker/dockerfile 1.16 and later, which wheelgap follows, pass -p/-t instead"
+                "docker/dockerfile 1.16 and later, which wheelgap follows, pass -p/-t instead",
+                line=line_number,
+                hard=not found,
             )
         return docs
 
@@ -748,11 +767,11 @@ def _parse_froms(
         # splitCommand: strings.TrimSpace, https://github.com/moby/buildkit/blob/cedaeca/frontend/dockerfile/parser/split_command.go
         owner = start if parts else number
         finish(instruction.strip(_GO_SPACES), joined=bool(parts), line_number=owner)
-        heredocs = heredocs_in(instruction)
+        heredocs = heredocs_in(instruction, owner)
         parts = []
     if parts:  # the file ended mid-continuation: Docker still reads what's there
         finish("".join(parts).strip(_GO_SPACES), joined=len(parts) > 1, line_number=start)
-        heredocs = heredocs_in("".join(parts))
+        heredocs = heredocs_in("".join(parts), start)
     if heredocs:
         raise DockerfileError(f"unterminated heredoc <<{heredocs[0][0]} (BuildKit rejects it)")
     return found, _global_arg_defaults(args_before_from, build_args)
@@ -1036,6 +1055,8 @@ def read_dockerfile(path: Path, build_args: Mapping[str, str] | None = None) -> 
     try:
         image, platform, number, used, global_args = _final_from(text, build_args)
         target = parse_image(image, platform)
+    except HeredocSyntaxError as e:
+        raise HeredocSyntaxError(f"{path}:{e.line}: {e}", line=e.line, hard=e.hard) from None
     except UnknownImageError as e:
         error = UnknownImageError(f"{path}: {e}")
         error.line = e.line if e.line is not None else number
@@ -3087,7 +3108,13 @@ def _dockerfile_requirements(
         )
     instructions: list[tuple[int, str]] = []
     bodies: dict[int, list[str]] = {}
-    froms, global_args = _parse_froms(text, build_args, instructions=instructions, bodies=bodies)
+    try:
+        froms, global_args = _parse_froms(text, build_args, instructions=instructions, bodies=bodies)
+    except HeredocSyntaxError as e:
+        core = str(e).removesuffix(", pass -p/-t instead")
+        raise DockerfileError(
+            f"line {e.line}: {core}, drop the `# syntax=` line, or set it to docker/dockerfile:1"
+        ) from None
     if report is None:
         report = InputsReport()
     if _heredoc_rules(syntax) is None:  # a digest-pinned docker/dockerfile: any version, so any `<<` may be a heredoc
